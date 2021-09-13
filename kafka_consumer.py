@@ -9,7 +9,9 @@ from functools import wraps
 import requests
 from elasticsearch import Elasticsearch
 from kafka import KafkaConsumer
-
+import threading
+from apscheduler.schedulers.background import BackgroundScheduler
+import itertools
 
 # fail_retry(try_times) 相当于 decorator
 # decorator(func) 相当于 wrapper
@@ -56,7 +58,7 @@ def get_sql_finger_print(soar_host, sql):
 
 
 def write_elasticsearch(es_host, es_index, slow_log):
-    es = Elasticsearch(es_host)
+    es = Elasticsearch(es_host, http_auth=('elastic', 'password'),)
     es.index(es_index, doc_type="_doc", body=slow_log)
 
 
@@ -74,6 +76,24 @@ def get_os_env(name):
     return val
 
 
+class FastWriteCounter():
+    def __init__(self):
+        self._number_of_read = 0
+        self._counter = itertools.count()
+        self._read_lock = threading.Lock()
+
+    def increment(self):
+        next(self._counter)
+
+    def value(self):
+        with self._read_lock:
+            value = next(self._counter) - self._number_of_read
+            self._number_of_read += 1
+        return value    
+
+def print_counter(counter):
+    logging.info('receive %d messages', counter.value())
+
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger('kafka')
@@ -89,13 +109,29 @@ if __name__ == '__main__':
 
     consumer = KafkaConsumer(slowlog_topic,
                              bootstrap_servers=[kafka_host],
-                             group_id=kafka_group_id + str(int(time.time())),
+                             group_id=kafka_group_id,
                              auto_offset_reset='earliest')
+
+    counter = FastWriteCounter()
+
+    scheduler = BackgroundScheduler()
+    # 添加任务,时间间隔10S
+    scheduler.add_job(print_counter, 'interval', args=(counter,), seconds=10, id='test_job1')
+
+    scheduler.start()
+
     for message in consumer:
+        counter.increment()
         try:
             val = str(message.value, encoding='utf-8')
             slow_log = json.loads(val)
-            data = get_sql_finger_print(soar_host, slow_log['slowsql'])
+            slowsql_key = 'slowsql'
+            if slowsql_key not in slow_log:
+                continue
+            data = get_sql_finger_print(soar_host, slow_log[slowsql_key])
+            if data is None:
+                logging.error('no finger print got')
+                sys.exit(1)
             slow_log['finger'] = data['fingerprint']
             slow_log['sql_id'] = data['id']
             'root'.split('_')
