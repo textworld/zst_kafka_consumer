@@ -135,8 +135,7 @@ if __name__ == '__main__':
                 continue
             data = get_sql_finger_print(soar_host, slow_log[slowsql_key])
             if data is None:
-                logging.error('no finger print got')
-                sys.exit(1)
+                continue
             slow_log['finger'] = data['fingerprint']
             slow_log['sql_id'] = data['id']
             'root'.split('_')
