@@ -54,6 +54,7 @@ def get_sql_finger_print(soar_host, sql):
     if resp.status_code >= 200 and resp.status_code < 300:
         return json.loads(resp.text)
 
+    logger.error("got http status code %d: %s", resp.status_code, resp.text)
     return None
 
 
@@ -106,6 +107,8 @@ if __name__ == '__main__':
     es_host = get_os_env('ES_HOST')
     soar_host = get_os_env('SOAR_HOST')
     es_index = get_os_env('ES_INDEX')
+    es_user  = get_os_env('ES_USER')
+    es_password = get_os_env('ES_PASSWORD')
 
     consumer = KafkaConsumer(slowlog_topic,
                              bootstrap_servers=[kafka_host],
@@ -119,6 +122,8 @@ if __name__ == '__main__':
     scheduler.add_job(print_counter, 'interval', args=(counter,), seconds=10, id='test_job1')
 
     scheduler.start()
+
+    es = Elasticsearch(es_host, http_auth=(es_user, es_password),)
 
     for message in consumer:
         counter.increment()
@@ -136,6 +141,6 @@ if __name__ == '__main__':
             slow_log['sql_id'] = data['id']
             'root'.split('_')
             slow_log['schema'] = slow_log['login_user'].split('_')[0]
-            write_elasticsearch(es_host, es_index, slow_log)
+            es.index(es_index, doc_type="_doc", body=slow_log)
         except json.decoder.JSONDecodeError as jde:
             pass
